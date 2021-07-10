@@ -90,13 +90,13 @@ def get_model(point_cloud, input_label, is_training, cat_num, part_num, \
 
   out_max = tf_util.max_pool2d(out7, [num_point, 1], padding='VALID', scope='maxpool')
 
-
-  one_hot_label_expand = tf.reshape(input_label, [batch_size, 1, 1, cat_num])
-  one_hot_label_expand = tf_util.conv2d(one_hot_label_expand, 64, [1, 1], 
-                       padding='VALID', stride=[1,1],
-                       bn=True, is_training=is_training,
-                       scope='one_hot_label_expand', bn_decay=bn_decay, is_dist=True)
-  out_max = tf.concat(axis=3, values=[out_max, one_hot_label_expand])
+  # Removed for no cat
+  # one_hot_label_expand = tf.reshape(input_label, [batch_size, 1, 1, cat_num])
+  # one_hot_label_expand = tf_util.conv2d(one_hot_label_expand, 64, [1, 1], 
+  #                      padding='VALID', stride=[1,1],
+  #                      bn=True, is_training=is_training,
+  #                      scope='one_hot_label_expand', bn_decay=bn_decay, is_dist=True)
+  #out_max = tf.concat(axis=3, values=[out_max, one_hot_label_expand])
   expand = tf.tile(out_max, [1, num_point, 1, 1])
 
   concat = tf.concat(axis=3, values=[expand, 
