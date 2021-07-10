@@ -43,7 +43,7 @@ def get_model(point_cloud, input_label, is_training, cat_num, part_num, \
                        bn=True, is_training=is_training, weight_decay=weight_decay,
                        scope='adj_conv2', bn_decay=bn_decay, is_dist=True)
 
-  net_1 = tf.compat.v1.reduce_max(out2, axis=-2, keep_dims=True)
+  net_1 = tf.compat.v1.reduce_max(out2, axis=-2, keepdims=True)
 
 
 
@@ -61,7 +61,7 @@ def get_model(point_cloud, input_label, is_training, cat_num, part_num, \
                        bn=True, is_training=is_training, weight_decay=weight_decay,
                        scope='adj_conv4', bn_decay=bn_decay, is_dist=True)
   
-  net_2 = tf.compat.v1.reduce_max(out4, axis=-2, keep_dims=True)
+  net_2 = tf.compat.v1.reduce_max(out4, axis=-2, keepdims=True)
   
   
 
@@ -79,7 +79,7 @@ def get_model(point_cloud, input_label, is_training, cat_num, part_num, \
   #                      bn=True, is_training=is_training, weight_decay=weight_decay,
   #                      scope='adj_conv6', bn_decay=bn_decay, is_dist=True)
 
-  net_3 = tf.compat.v1.reduce_max(out5, axis=-2, keep_dims=True)
+  net_3 = tf.compat.v1.reduce_max(out5, axis=-2, keepdims=True)
 
 
 

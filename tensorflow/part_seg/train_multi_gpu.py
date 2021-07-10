@@ -1,16 +1,19 @@
 import argparse
 import subprocess
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 import tensorflow as tf
+import torch
 import numpy as np
 from datetime import datetime
 import json
-import os
 import sys
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(BASE_DIR)
 sys.path.append(os.path.dirname(BASE_DIR))
-import provider
 import part_seg_model as model
+import affordances_loader
+
 
 TOWER_NAME = 'tower'
 
@@ -24,7 +27,6 @@ parser.add_argument('--output_dir', type=str, default='train_results', help='Dir
 parser.add_argument('--wd', type=float, default=0, help='Weight Decay [Default: 0.0]')
 FLAGS = parser.parse_args()
 
-hdf5_data_dir = os.path.join(BASE_DIR, './hdf5_data')
 
 # MAIN SCRIPT
 point_num = FLAGS.point_num
@@ -34,18 +36,10 @@ output_dir = FLAGS.output_dir
 if not os.path.exists(output_dir):
   os.mkdir(output_dir)
 
-# color_map_file = os.path.join(hdf5_data_dir, 'part_color_mapping.json')
-# color_map = json.load(open(color_map_file, 'r'))
+all_obj_cats = [('Bowl', 0), ('Cup', 1), ('Hammer', 2), ('Knife', 3), ('Ladle', 4), ('Mallet', 5), ('Mug', 6), ('Pot', 7), ('Saw', 8), ('Scissors', 9), ('Scoop', 10), ('Shears', 11), ('Shovel', 12), ('Spoon', 13), ('Tenderizer', 14), ('Trowel', 15), ('Turner', 16)]
 
-all_obj_cats_file = os.path.join(hdf5_data_dir, 'all_object_categories.txt')
-fin = open(all_obj_cats_file, 'r')
-lines = [line.rstrip() for line in fin.readlines()]
-all_obj_cats = [(line.split()[0], line.split()[1]) for line in lines]
-fin.close()
-
-all_cats = json.load(open(os.path.join(hdf5_data_dir, 'overallid_to_catid_partid.json'), 'r'))
-NUM_CATEGORIES = 16
-NUM_PART_CATS = len(all_cats)
+NUM_CATEGORIES = 17
+NUM_PART_CATS = 8
 
 print('#### Batch Size Per GPU: {0}'.format(batch_size))
 print('#### Point Number: {0}'.format(point_num))
@@ -65,9 +59,6 @@ BASE_LEARNING_RATE = 0.003
 MOMENTUM = 0.9
 TRAINING_EPOCHES = FLAGS.epoch
 print('### Training epoch: {0}'.format(TRAINING_EPOCHES))
-
-TRAINING_FILE_LIST = os.path.join(hdf5_data_dir, 'train_hdf5_file_list.txt')
-TESTING_FILE_LIST = os.path.join(hdf5_data_dir, 'val_hdf5_file_list.txt')
 
 MODEL_STORAGE_PATH = os.path.join(output_dir, 'trained_models')
 if not os.path.exists(MODEL_STORAGE_PATH):
@@ -219,11 +210,6 @@ def train():
     train_writer = tf.compat.v1.summary.FileWriter(SUMMARIES_FOLDER + '/train', sess.graph)
     test_writer = tf.compat.v1.summary.FileWriter(SUMMARIES_FOLDER + '/test')
 
-    train_file_list = provider.getDataFiles(TRAINING_FILE_LIST)
-    num_train_file = len(train_file_list)
-    test_file_list = provider.getDataFiles(TESTING_FILE_LIST)
-    num_test_file = len(test_file_list)
-
     fcmd = open(os.path.join(LOG_STORAGE_PATH, 'cmd.txt'), 'w')
     fcmd.write(str(FLAGS))
     fcmd.close()
@@ -231,64 +217,65 @@ def train():
     # write logs to the disk
     flog = open(os.path.join(LOG_STORAGE_PATH, 'log.txt'), 'w')
 
-    def train_one_epoch(train_file_idx, epoch_num):
+
+    train_dataset = affordances_loader.PartDataset(classification=False, npoints=point_num, split='train')
+    train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+
+    test_dataset = affordances_loader.PartDataset(classification=False, npoints=point_num, split='val')
+    test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+
+    def train_one_epoch( epoch_num):
       is_training = True
 
-      for i in range(num_train_file):
-        cur_train_filename = os.path.join(hdf5_data_dir, train_file_list[train_file_idx[i]])
-        printout(flog, 'Loading train file ' + cur_train_filename)
+      total_loss = 0.0
+      total_seg_acc = 0.0
 
-        cur_data, cur_labels, cur_seg = provider.load_h5_data_label_seg(cur_train_filename)
-        cur_data, cur_labels, order = provider.shuffle_data(cur_data, np.squeeze(cur_labels))
-        cur_seg = cur_seg[order, ...]
+      for batch_id, data in enumerate(train_dataloader):
+        points, part_label, cls_label_ = data
+        if(points.size(0)<batch_size):
+          break
 
-        cur_labels_one_hot = convert_label_to_one_hot(cur_labels)
-
-        num_data = len(cur_labels)
-        num_batch = num_data // (FLAGS.num_gpu * batch_size) # For all working gpus
-
-        total_loss = 0.0
-        total_seg_acc = 0.0
-
-        for j in range(num_batch):
-          begidx_0 = j * batch_size
-          endidx_0 = (j + 1) * batch_size
-
-          feed_dict = {
-              # For the first gpu
-              pointclouds_phs[0]: cur_data[begidx_0: endidx_0, ...], 
-              input_label_phs[0]: cur_labels_one_hot[begidx_0: endidx_0, ...], 
-              seg_phs[0]: cur_seg[begidx_0: endidx_0, ...],
-              is_training_phs[0]: is_training, 
-              }
+        # points = tf.convert_to_tensor(points)
+        # part_label = tf.convert_to_tensor(part_label)
+        # cls_label_ = tf.convert_to_tensor(cls_label_)
+        # print(cls_label_.shape)
+        cls_label_one_hot = convert_label_to_one_hot(cls_label_)
 
 
-          # train_op is for both gpus, and the others are for gpu_1
-          _, loss_val, per_instance_seg_loss_val, seg_pred_val, pred_seg_res \
-              = sess.run([train_op, loss, per_instance_seg_loss, seg_pred, per_instance_seg_pred_res], \
-              feed_dict=feed_dict)
+        feed_dict = {
+          # For the first gpu
+          pointclouds_phs[0]: points, 
+          input_label_phs[0]: cls_label_one_hot, 
+          seg_phs[0]: part_label,
+          is_training_phs[0]: is_training, 
+        }
 
-          per_instance_part_acc = np.mean(pred_seg_res == cur_seg[begidx_0: endidx_0, ...], axis=1)
-          average_part_acc = np.mean(per_instance_part_acc)
+        # train_op is for both gpus, and the others are for gpu_1
+        _, loss_val, per_instance_seg_loss_val, seg_pred_val, pred_seg_res \
+            = sess.run([train_op, loss, per_instance_seg_loss, seg_pred, per_instance_seg_pred_res], \
+            feed_dict=feed_dict)
 
-          total_loss += loss_val
-          total_seg_acc += average_part_acc
+        per_instance_part_acc = np.mean(pred_seg_res == part_label.numpy(), axis=1)
+        average_part_acc = np.mean(per_instance_part_acc)
 
-        total_loss = total_loss * 1.0 / num_batch
-        total_seg_acc = total_seg_acc * 1.0 / num_batch
+        total_loss += loss_val
+        total_seg_acc += average_part_acc
+              
+      total_loss = total_loss * 1.0 / len(train_dataloader)
+      total_seg_acc = total_seg_acc * 1.0 / len(train_dataloader)
 
-        lr_sum, bn_decay_sum, batch_sum, train_loss_sum, train_seg_acc_sum = sess.run(\
-            [lr_op, bn_decay_op, batch_op, total_train_loss_sum_op, seg_train_acc_sum_op], \
-            feed_dict={total_training_loss_ph: total_loss, seg_training_acc_ph: total_seg_acc})
+      lr_sum, bn_decay_sum, batch_sum, train_loss_sum, train_seg_acc_sum = sess.run(\
+          [lr_op, bn_decay_op, batch_op, total_train_loss_sum_op, seg_train_acc_sum_op], \
+          feed_dict={total_training_loss_ph: total_loss, seg_training_acc_ph: total_seg_acc})
 
-        # train_writer.add_summary(train_loss_sum, i + epoch_num * num_train_file)
-        # train_writer.add_summary(lr_sum, i + epoch_num * num_train_file)
-        # train_writer.add_summary(bn_decay_sum, i + epoch_num * num_train_file)
-        # train_writer.add_summary(train_seg_acc_sum, i + epoch_num * num_train_file)
-        # train_writer.add_summary(batch_sum, i + epoch_num * num_train_file)
+      # train_writer.add_summary(train_loss_sum, i + epoch_num * num_train_file)
+      # train_writer.add_summary(lr_sum, i + epoch_num * num_train_file)
+      # train_writer.add_summary(bn_decay_sum, i + epoch_num * num_train_file)
+      # train_writer.add_summary(train_seg_acc_sum, i + epoch_num * num_train_file)
+      # train_writer.add_summary(batch_sum, i + epoch_num * num_train_file)
 
-        printout(flog, '\tTraining Total Mean_loss: %f' % total_loss)
-        printout(flog, '\t\tTraining Seg Accuracy: %f' % total_seg_acc)
+      printout(flog, '\tTraining Total Mean_loss: %f' % total_loss)
+      printout(flog, '\t\tTraining Seg Accuracy: %f' % total_seg_acc)
 
     def eval_one_epoch(epoch_num):
       is_training = False
@@ -300,46 +287,43 @@ def train():
       total_seg_acc_per_cat = np.zeros((NUM_CATEGORIES)).astype(np.float32)
       total_seen_per_cat = np.zeros((NUM_CATEGORIES)).astype(np.int32)
 
-      for i in range(num_test_file):
-        cur_test_filename = os.path.join(hdf5_data_dir, test_file_list[i])
-        printout(flog, 'Loading test file ' + cur_test_filename)
+      for batch_id, data in enumerate(test_dataloader):
+        points, part_label, cls_label_ = data
+        if(points.size(0)<batch_size):
+          break
 
-        cur_data, cur_labels, cur_seg = provider.load_h5_data_label_seg(cur_test_filename)
-        cur_labels = np.squeeze(cur_labels)
+        # points = tf.convert_to_tensor(points)
+        # part_label = tf.convert_to_tensor(part_label)
+        # cls_label_ = tf.convert_to_tensor(cls_label_)
+        # print(cls_label_.shape)
+        cls_label_one_hot = convert_label_to_one_hot(cls_label_)
 
-        cur_labels_one_hot = convert_label_to_one_hot(cur_labels)
 
-        #(1870, 2048, 3) (1870,) (1870, 2048) (1870, 16)
-        #print(cur_data.shape, cur_labels.shape, cur_seg.shape, cur_labels_one_hot.shape)
+        feed_dict = {
+          # For the first gpu
+          pointclouds_phs[0]: points, 
+          input_label_phs[0]: cls_label_one_hot, 
+          seg_phs[0]: part_label,
+          is_training_phs[0]: is_training, 
+        }
 
-        num_data = len(cur_labels)
-        num_batch = num_data // batch_size
-
-        # Run on gpu_1, since the tensors used for evaluation are defined on gpu_1
-        for j in range(num_batch):
-          begidx = j * batch_size
-          endidx = (j + 1) * batch_size
-          feed_dict = {
-              pointclouds_phs[0]: cur_data[begidx: endidx, ...], 
-              input_label_phs[0]: cur_labels_one_hot[begidx: endidx, ...], 
-              seg_phs[0]: cur_seg[begidx: endidx, ...],
-              is_training_phs[0]: is_training}
-
-          loss_val, per_instance_seg_loss_val, seg_pred_val, pred_seg_res \
+        loss_val, per_instance_seg_loss_val, seg_pred_val, pred_seg_res \
               = sess.run([loss, per_instance_seg_loss, seg_pred, per_instance_seg_pred_res], \
               feed_dict=feed_dict)
 
-          per_instance_part_acc = np.mean(pred_seg_res == cur_seg[begidx: endidx, ...], axis=1)
-          average_part_acc = np.mean(per_instance_part_acc)
+        per_instance_part_acc = np.mean(pred_seg_res == part_label.numpy(), axis=1)
+        average_part_acc = np.mean(per_instance_part_acc)
 
-          total_seen += 1
-          total_loss += loss_val
-          
-          total_seg_acc += average_part_acc
+        total_seen += 1
+        total_loss += loss_val
+        
+        total_seg_acc += average_part_acc
 
-          for shape_idx in range(begidx, endidx):
-            total_seen_per_cat[cur_labels[shape_idx]] += 1
-            total_seg_acc_per_cat[cur_labels[shape_idx]] += per_instance_part_acc[shape_idx - begidx]
+        cls_label_ = cls_label_.numpy()
+
+        for shape_idx in range(cls_label_.shape[0]):
+          total_seen_per_cat[cls_label_[shape_idx]] += 1
+          total_seg_acc_per_cat[cls_label_[shape_idx]] += per_instance_part_acc[shape_idx]
 
       total_loss = total_loss * 1.0 / total_seen
       total_seg_acc = total_seg_acc * 1.0 / total_seen
@@ -369,10 +353,7 @@ def train():
 
       printout(flog, '\n>>> Training for the epoch %d/%d ...' % (epoch, TRAINING_EPOCHES))
 
-      train_file_idx = np.arange(0, len(train_file_list))
-      np.random.shuffle(train_file_idx)
-
-      train_one_epoch(train_file_idx, epoch)
+      train_one_epoch(epoch)
 
       if epoch % 5 == 0:
         cp_filename = saver.save(sess, os.path.join(MODEL_STORAGE_PATH, 'epoch_' + str(epoch)+'.ckpt'))
