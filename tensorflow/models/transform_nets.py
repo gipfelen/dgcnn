@@ -11,8 +11,8 @@ def input_transform_net(edge_feature, is_training, bn_decay=None, K=3, is_dist=F
   """ Input (XYZ) Transform Net, input is BxNx3 gray image
     Return:
       Transformation matrix of size 3xK """
-  batch_size = edge_feature.get_shape()[0].value
-  num_point = edge_feature.get_shape()[1].value
+  batch_size = edge_feature.get_shape()[0]
+  num_point = edge_feature.get_shape()[1]
 
   # input_image = tf.expand_dims(point_cloud, -1)
   net = tf_util.conv2d(edge_feature, 64, [1,1],
@@ -24,7 +24,7 @@ def input_transform_net(edge_feature, is_training, bn_decay=None, K=3, is_dist=F
              bn=True, is_training=is_training,
              scope='tconv2', bn_decay=bn_decay, is_dist=is_dist)
   
-  net = tf.reduce_max(net, axis=-2, keep_dims=True)
+  net = tf.compat.v1.reduce_max(net, axis=-2, keep_dims=True)
   
   net = tf_util.conv2d(net, 1024, [1,1],
              padding='VALID', stride=[1,1],
@@ -39,16 +39,16 @@ def input_transform_net(edge_feature, is_training, bn_decay=None, K=3, is_dist=F
   net = tf_util.fully_connected(net, 256, bn=True, is_training=is_training,
                   scope='tfc2', bn_decay=bn_decay,is_dist=is_dist)
 
-  with tf.variable_scope('transform_XYZ') as sc:
+  with tf.compat.v1.variable_scope('transform_XYZ') as sc:
     # assert(K==3)
     with tf.device('/cpu:0'):
-      weights = tf.get_variable('weights', [256, K*K],
+      weights = tf.compat.v1.get_variable('weights', [256, K*K],
                     initializer=tf.constant_initializer(0.0),
                     dtype=tf.float32)
-      biases = tf.get_variable('biases', [K*K],
+      biases = tf.compat.v1.get_variable('biases', [K*K],
                    initializer=tf.constant_initializer(0.0),
                    dtype=tf.float32)
-    biases += tf.constant(np.eye(K).flatten(), dtype=tf.float32)
+    biases = biases + tf.constant(np.eye(K).flatten(), dtype=tf.float32)
     transform = tf.matmul(net, weights)
     transform = tf.nn.bias_add(transform, biases)
 

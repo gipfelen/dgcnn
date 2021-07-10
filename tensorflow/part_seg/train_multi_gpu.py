@@ -16,7 +16,7 @@ TOWER_NAME = 'tower'
 
 # DEFAULT SETTINGS
 parser = argparse.ArgumentParser()
-parser.add_argument('--num_gpu', type=int, default=2, help='The number of GPUs to use [default: 2]')
+parser.add_argument('--num_gpu', type=int, default=1, help='The number of GPUs to use [default: 2]')
 parser.add_argument('--batch', type=int, default=16, help='Batch Size per GPU during training [default: 32]')
 parser.add_argument('--epoch', type=int, default=201, help='Epoch to run [default: 50]')
 parser.add_argument('--point_num', type=int, default=2048, help='Point Number [256/512/1024/2048]')
@@ -133,7 +133,7 @@ def train():
 
     batch = tf.Variable(0, trainable=False)
     
-    learning_rate = tf.train.exponential_decay(
+    learning_rate = tf.compat.v1.train.exponential_decay(
             BASE_LEARNING_RATE,     # base learning rate
             batch * batch_size,     # global_var indicating the number of steps
             DECAY_STEP,             # step size
@@ -142,7 +142,7 @@ def train():
             )
     learning_rate = tf.maximum(learning_rate, LEARNING_RATE_CLIP)
   
-    bn_momentum = tf.train.exponential_decay(
+    bn_momentum = tf.compat.v1.train.exponential_decay(
           BN_INIT_DECAY,
           batch*batch_size,
           BN_DECAY_DECAY_STEP,
@@ -154,7 +154,7 @@ def train():
     batch_op = tf.summary.scalar('batch_number', batch)
     bn_decay_op = tf.summary.scalar('bn_decay', bn_decay)
 
-    trainer = tf.train.AdamOptimizer(learning_rate)
+    trainer = tf.compat.v1.train.AdamOptimizer(learning_rate)
 
     # store tensors for different gpus
     tower_grads = []
@@ -163,14 +163,14 @@ def train():
     seg_phs =[]
     is_training_phs =[]
 
-    with tf.variable_scope(tf.get_variable_scope()):
-      for i in xrange(FLAGS.num_gpu):
+    with tf.compat.v1.variable_scope(tf.compat.v1.get_variable_scope()):
+      for i in range(FLAGS.num_gpu):
         with tf.device('/gpu:%d' % i):
           with tf.name_scope('%s_%d' % (TOWER_NAME, i)) as scope:
-            pointclouds_phs.append(tf.placeholder(tf.float32, shape=(batch_size, point_num, 3))) # for points
-            input_label_phs.append(tf.placeholder(tf.float32, shape=(batch_size, NUM_CATEGORIES))) # for one-hot category label
-            seg_phs.append(tf.placeholder(tf.int32, shape=(batch_size, point_num))) # for part labels
-            is_training_phs.append(tf.placeholder(tf.bool, shape=()))
+            pointclouds_phs.append(tf.compat.v1.placeholder(tf.float32, shape=(batch_size, point_num, 3))) # for points
+            input_label_phs.append(tf.compat.v1.placeholder(tf.float32, shape=(batch_size, NUM_CATEGORIES))) # for one-hot category label
+            seg_phs.append(tf.compat.v1.placeholder(tf.int32, shape=(batch_size, point_num))) # for part labels
+            is_training_phs.append(tf.compat.v1.placeholder(tf.bool, shape=()))
 
             seg_pred = model.get_model(pointclouds_phs[-1], input_label_phs[-1], \
                 is_training=is_training_phs[-1], bn_decay=bn_decay, cat_num=NUM_CATEGORIES, \
@@ -180,12 +180,12 @@ def train():
             loss, per_instance_seg_loss, per_instance_seg_pred_res  \
               = model.get_loss(seg_pred, seg_phs[-1])
 
-            total_training_loss_ph = tf.placeholder(tf.float32, shape=())
-            total_testing_loss_ph = tf.placeholder(tf.float32, shape=())
+            total_training_loss_ph = tf.compat.v1.placeholder(tf.float32, shape=())
+            total_testing_loss_ph = tf.compat.v1.placeholder(tf.float32, shape=())
 
-            seg_training_acc_ph = tf.placeholder(tf.float32, shape=())
-            seg_testing_acc_ph = tf.placeholder(tf.float32, shape=())
-            seg_testing_acc_avg_cat_ph = tf.placeholder(tf.float32, shape=())
+            seg_training_acc_ph = tf.compat.v1.placeholder(tf.float32, shape=())
+            seg_testing_acc_ph = tf.compat.v1.placeholder(tf.float32, shape=())
+            seg_testing_acc_avg_cat_ph = tf.compat.v1.placeholder(tf.float32, shape=())
 
             total_train_loss_sum_op = tf.summary.scalar('total_training_loss', total_training_loss_ph)
             total_test_loss_sum_op = tf.summary.scalar('total_testing_loss', total_testing_loss_ph)
@@ -195,7 +195,7 @@ def train():
             seg_test_acc_sum_op = tf.summary.scalar('seg_testing_acc', seg_testing_acc_ph)
             seg_test_acc_avg_cat_op = tf.summary.scalar('seg_testing_acc_avg_cat', seg_testing_acc_avg_cat_ph)
 
-            tf.get_variable_scope().reuse_variables()
+            tf.compat.v1.get_variable_scope().reuse_variables()
 
             grads = trainer.compute_gradients(loss)
 
@@ -205,19 +205,19 @@ def train():
 
     train_op = trainer.apply_gradients(grads, global_step=batch)
 
-    saver = tf.train.Saver(tf.global_variables(), sharded=True, max_to_keep=20)
+    saver = tf.compat.v1.train.Saver(tf.compat.v1.global_variables(), sharded=True, max_to_keep=20)
 
-    config = tf.ConfigProto()
+    config = tf.compat.v1.ConfigProto()
     config.gpu_options.allow_growth = True
     config.allow_soft_placement = True
-    sess = tf.Session(config=config)
+    sess = tf.compat.v1.Session(config=config)
     
-    init = tf.group(tf.global_variables_initializer(),
-             tf.local_variables_initializer())
+    init = tf.group(tf.compat.v1.global_variables_initializer(),
+             tf.compat.v1.local_variables_initializer())
     sess.run(init)
 
-    train_writer = tf.summary.FileWriter(SUMMARIES_FOLDER + '/train', sess.graph)
-    test_writer = tf.summary.FileWriter(SUMMARIES_FOLDER + '/test')
+    train_writer = tf.compat.v1.summary.FileWriter(SUMMARIES_FOLDER + '/train', sess.graph)
+    test_writer = tf.compat.v1.summary.FileWriter(SUMMARIES_FOLDER + '/test')
 
     train_file_list = provider.getDataFiles(TRAINING_FILE_LIST)
     num_train_file = len(train_file_list)
@@ -253,8 +253,6 @@ def train():
         for j in range(num_batch):
           begidx_0 = j * batch_size
           endidx_0 = (j + 1) * batch_size
-          begidx_1 = (j + 1) * batch_size
-          endidx_1 = (j + 2) * batch_size
 
           feed_dict = {
               # For the first gpu
@@ -262,11 +260,6 @@ def train():
               input_label_phs[0]: cur_labels_one_hot[begidx_0: endidx_0, ...], 
               seg_phs[0]: cur_seg[begidx_0: endidx_0, ...],
               is_training_phs[0]: is_training, 
-              # For the second gpu
-              pointclouds_phs[1]: cur_data[begidx_1: endidx_1, ...], 
-              input_label_phs[1]: cur_labels_one_hot[begidx_1: endidx_1, ...], 
-              seg_phs[1]: cur_seg[begidx_1: endidx_1, ...],
-              is_training_phs[1]: is_training, 
               }
 
 
@@ -275,7 +268,7 @@ def train():
               = sess.run([train_op, loss, per_instance_seg_loss, seg_pred, per_instance_seg_pred_res], \
               feed_dict=feed_dict)
 
-          per_instance_part_acc = np.mean(pred_seg_res == cur_seg[begidx_1: endidx_1, ...], axis=1)
+          per_instance_part_acc = np.mean(pred_seg_res == cur_seg[begidx_0: endidx_0, ...], axis=1)
           average_part_acc = np.mean(per_instance_part_acc)
 
           total_loss += loss_val
@@ -288,11 +281,11 @@ def train():
             [lr_op, bn_decay_op, batch_op, total_train_loss_sum_op, seg_train_acc_sum_op], \
             feed_dict={total_training_loss_ph: total_loss, seg_training_acc_ph: total_seg_acc})
 
-        train_writer.add_summary(train_loss_sum, i + epoch_num * num_train_file)
-        train_writer.add_summary(lr_sum, i + epoch_num * num_train_file)
-        train_writer.add_summary(bn_decay_sum, i + epoch_num * num_train_file)
-        train_writer.add_summary(train_seg_acc_sum, i + epoch_num * num_train_file)
-        train_writer.add_summary(batch_sum, i + epoch_num * num_train_file)
+        # train_writer.add_summary(train_loss_sum, i + epoch_num * num_train_file)
+        # train_writer.add_summary(lr_sum, i + epoch_num * num_train_file)
+        # train_writer.add_summary(bn_decay_sum, i + epoch_num * num_train_file)
+        # train_writer.add_summary(train_seg_acc_sum, i + epoch_num * num_train_file)
+        # train_writer.add_summary(batch_sum, i + epoch_num * num_train_file)
 
         printout(flog, '\tTraining Total Mean_loss: %f' % total_loss)
         printout(flog, '\t\tTraining Seg Accuracy: %f' % total_seg_acc)
@@ -316,6 +309,9 @@ def train():
 
         cur_labels_one_hot = convert_label_to_one_hot(cur_labels)
 
+        #(1870, 2048, 3) (1870,) (1870, 2048) (1870, 16)
+        #print(cur_data.shape, cur_labels.shape, cur_seg.shape, cur_labels_one_hot.shape)
+
         num_data = len(cur_labels)
         num_batch = num_data // batch_size
 
@@ -324,10 +320,10 @@ def train():
           begidx = j * batch_size
           endidx = (j + 1) * batch_size
           feed_dict = {
-              pointclouds_phs[1]: cur_data[begidx: endidx, ...], 
-              input_label_phs[1]: cur_labels_one_hot[begidx: endidx, ...], 
-              seg_phs[1]: cur_seg[begidx: endidx, ...],
-              is_training_phs[1]: is_training}
+              pointclouds_phs[0]: cur_data[begidx: endidx, ...], 
+              input_label_phs[0]: cur_labels_one_hot[begidx: endidx, ...], 
+              seg_phs[0]: cur_seg[begidx: endidx, ...],
+              is_training_phs[0]: is_training}
 
           loss_val, per_instance_seg_loss_val, seg_pred_val, pred_seg_res \
               = sess.run([loss, per_instance_seg_loss, seg_pred, per_instance_seg_pred_res], \
@@ -353,8 +349,8 @@ def train():
           feed_dict={total_testing_loss_ph: total_loss, \
           seg_testing_acc_ph: total_seg_acc})
 
-      test_writer.add_summary(test_loss_sum, (epoch_num+1) * num_train_file-1)
-      test_writer.add_summary(test_seg_acc_sum, (epoch_num+1) * num_train_file-1)
+      #test_writer.add_summary(test_loss_sum, (epoch_num+1) * num_train_file-1)
+      #test_writer.add_summary(test_seg_acc_sum, (epoch_num+1) * num_train_file-1)
 
       printout(flog, '\tTesting Total Mean_loss: %f' % total_loss)
       printout(flog, '\t\tTesting Seg Accuracy: %f' % total_seg_acc)
