@@ -13,7 +13,7 @@ sys.path.append(BASE_DIR)
 sys.path.append(os.path.dirname(BASE_DIR))
 import part_seg_model as model
 import affordances_loader
-
+import kitchen_dat_subset_loader
 
 TOWER_NAME = 'tower'
 
@@ -22,6 +22,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--num_gpu', type=int, default=1, help='The number of GPUs to use [default: 2]')
 parser.add_argument('--batch', type=int, default=16, help='Batch Size per GPU during training [default: 32]')
 parser.add_argument('--epoch', type=int, default=201, help='Epoch to run [default: 50]')
+parser.add_argument('--dataset', type=str, default="affordances", help='The number of GPUs to use [default: 2]')
 parser.add_argument('--point_num', type=int, default=2048, help='Point Number [256/512/1024/2048]')
 parser.add_argument('--output_dir', type=str, default='train_results', help='Directory that stores all training logs and trained models')
 parser.add_argument('--wd', type=float, default=0, help='Weight Decay [Default: 0.0]')
@@ -217,12 +218,18 @@ def train():
     # write logs to the disk
     flog = open(os.path.join(LOG_STORAGE_PATH, 'log.txt'), 'w')
 
+    if FLAGS.dataset == "affordances":
+      train_dataset = affordances_loader.PartDataset(classification=False, npoints=point_num, split='train')
+      train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
 
-    train_dataset = affordances_loader.PartDataset(classification=False, npoints=point_num, split='train')
-    train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+      test_dataset = affordances_loader.PartDataset(classification=False, npoints=point_num, split='val')
+      test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+    elif FLAGS.dataset == "kitchen":
+      train_dataset = kitchen_dat_subset_loader.PartDataset(classification=False, npoints=point_num, split='train')
+      train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
 
-    test_dataset = affordances_loader.PartDataset(classification=False, npoints=point_num, split='val')
-    test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+      test_dataset = kitchen_dat_subset_loader.PartDataset(classification=False, npoints=point_num, split='val')
+      test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
 
     def train_one_epoch( epoch_num):
       is_training = True
