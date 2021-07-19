@@ -192,6 +192,8 @@ def predict():
     total_seg_acc_per_cat = np.zeros((NUM_CATEGORIES)).astype(np.float32)
     total_seen_per_cat = np.zeros((NUM_CATEGORIES)).astype(np.int32)
 
+    all_objects = []
+
     for batch_id, data in enumerate(test_dataloader):
       points, part_label, cls_label_ = data
       if(points.size(0)<batch_size):
@@ -219,6 +221,27 @@ def predict():
       #pred_seg_res = pred_seg_res[0, ...]
 
       pred_seg_res = np.argmax(pred_seg_res, axis=2)
+
+      for batch_id in range(points.shape[0]):
+        pred_points = {}
+
+        pred_points['cls'] =  int(cls_label_[batch_id])
+        pred_points['points'] = []
+
+        for i in range(points.shape[1]):
+          point = {}
+          point['x'] = float(points[batch_id][i][0])
+          point['y'] = float(points[batch_id][i][1])
+          point['z'] = float(points[batch_id][i][2])
+
+
+          point['label'] = int(part_label[batch_id][i])
+          point['pred'] = int(pred_seg_res[batch_id][i])
+
+          pred_points['points'].append(point)
+
+        all_objects.append(pred_points)
+        
 
       # print(pred_seg_res.shape, part_label.shape)
 
@@ -248,6 +271,8 @@ def predict():
         printout(flog, '\n\t\tCategory %s Object Number: %d' % (all_obj_cats[cat_idx][0], total_seen_per_cat[cat_idx]))
         printout(flog, '\t\tCategory %s Seg Accuracy: %f' % (all_obj_cats[cat_idx][0], total_seg_acc_per_cat[cat_idx]/total_seen_per_cat[cat_idx]))
 
+    with open('output.json', 'w') as f:
+      json.dump(all_objects, f)
 
     # for shape_idx in range(len_pts_files):
     #   if shape_idx % 100 == 0:
