@@ -1,3 +1,4 @@
+import open3d as o3d
 import argparse
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
@@ -15,7 +16,7 @@ import kitchen_dat_subset_loader
 import torch
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--model_path', default='train_results/trained_models/epoch_200.ckpt', help='Model checkpoint path')
+parser.add_argument('--model_path', default='train_results/trained_models_affordances/epoch_200.ckpt', help='Model checkpoint path')
 parser.add_argument('--dataset', type=str, default="affordances", help='The number of GPUs to use [default: 2]')
 FLAGS = parser.parse_args()
 
@@ -26,10 +27,11 @@ ply_data_dir = os.path.join(BASE_DIR, './PartAnnotation')
 gpu_to_use = 0
 output_dir = os.path.join(BASE_DIR, './test_results')
 output_verbose = False  
+should_save = False
 
 # MAIN SCRIPT
 point_num = 2048            
-batch_size = 1
+batch_size = 8
 
 # test_file_list = os.path.join(BASE_DIR, 'testing_ply_file_list.txt')
 
@@ -49,16 +51,49 @@ batch_size = 1
 # objnames = [line.split()[0] for line in lines] 
 # on2oid = {objcats[i]:i for i in range(len(objcats))} 
 # fin.close()
-all_obj_cats = [('Bowl', 0), ('Cup', 1), ('Hammer', 2), ('Knife', 3), ('Ladle', 4), ('Mallet', 5), ('Mug', 6), ('Pot', 7), ('Saw', 8), ('Scissors', 9), ('Scoop', 10), ('Shears', 11), ('Shovel', 12), ('Spoon', 13), ('Tenderizer', 14), ('Trowel', 15), ('Turner', 16)]
+all_obj_cats = [('bowl', 0), ('cup', 1), ('hammer', 2), ('knife', 3), ('ladle', 4), ('mallet', 5), ('mug', 6), ('pot', 7), ('saw', 8), ('scissors', 9), ('scoop', 10), ('shears', 11), ('shovel', 12), ('spoon', 13), ('tenderizer', 14), ('trowel', 15), ('turner', 16)]
 
 
 # color_map_file = os.path.join(hdf5_data_dir, 'part_color_mapping.json')
 # color_map = json.load(open(color_map_file, 'r'))
 
+
+entropy_neighbors=20
+
 NUM_CATEGORIES = 17
 NUM_PART_CATS = 8
 
 # cpid2oid = json.load(open(os.path.join(hdf5_data_dir, 'catid_partid_to_overallid.json'), 'r'))
+
+def get_entropy(pred_choice,ground_truth,points,cls_label,total_entropy_per_cat,num_points,entropy_neighbors):
+
+    ground_truth = ground_truth.numpy()
+    points = points.numpy()
+
+
+    def get_neigborhood_with_n_points(pcd, pcd_tree, poi, points=20):
+        [k, idx, _] = pcd_tree.search_knn_vector_3d(pcd.points[poi], 20)
+        #np.asarray(pcd.colors)[idx[1:], :] = [0, 0, 1]
+        return k, idx
+
+    def get_neigborhood_in_radius(pcd, pcd_tree, poi, radius=0.005):
+        [k, idx, _] = pcd_tree.search_radius_vector_3d(pcd.points[poi], radius)
+        #np.asarray(pcd.colors)[idx[1:], :] = [0, 1, 0]
+        return k, idx
+
+    pcd = o3d.geometry.PointCloud()
+    pcd.points= o3d.utility.Vector3dVector(points)
+    pcd_tree = o3d.geometry.KDTreeFlann(pcd)
+    entropy_predicted = []
+    entropy_gt = []
+    for poi in range(len(pcd.points)):
+        _, neigborhood_idx = get_neigborhood_with_n_points(pcd, pcd_tree, poi, entropy_neighbors)
+        entropy_predicted.append(np.sum(pred_choice.take(neigborhood_idx) != pred_choice[poi]))
+        entropy_gt.append(np.sum(ground_truth.take(neigborhood_idx) != ground_truth[poi]))
+
+    entropy = np.sum(entropy_predicted)/(num_points*entropy_neighbors)*100
+    total_entropy_per_cat[cls_label] += entropy
+    return entropy, entropy_predicted, entropy_gt
 
 def printout(flog, data):
   print(data)
@@ -182,15 +217,21 @@ def predict():
       test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
     elif FLAGS.dataset == "kitchen":
       test_dataset = kitchen_dat_subset_loader.PartDataset(classification=False, npoints=point_num, split='test')
-      test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+      test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
     is_training = False
 
     total_loss = 0.0
     total_seg_acc = 0.0
     total_seen = 0
+    total_seg_acc_seen = 0
+    total_acc_iou = 0.0
+    entropy = []
+
 
     total_seg_acc_per_cat = np.zeros((NUM_CATEGORIES)).astype(np.float32)
     total_seen_per_cat = np.zeros((NUM_CATEGORIES)).astype(np.int32)
+    total_per_cat_iou = np.zeros(NUM_CATEGORIES).astype(np.float32)
+    total_entropy_per_cat = np.zeros(NUM_CATEGORIES).astype(np.float32)
 
     all_objects = []
 
@@ -222,33 +263,36 @@ def predict():
 
       pred_seg_res = np.argmax(pred_seg_res, axis=2)
 
-      for batch_id in range(points.shape[0]):
-        pred_points = {}
 
-        pred_points['cls'] =  int(cls_label_[batch_id])
-        pred_points['points'] = []
+      if should_save:
+        for batch_id in range(points.shape[0]):
+          pred_points = {}
 
-        for i in range(points.shape[1]):
-          point = {}
-          point['x'] = float(points[batch_id][i][0])
-          point['y'] = float(points[batch_id][i][1])
-          point['z'] = float(points[batch_id][i][2])
+          pred_points['cls'] =  int(cls_label_[batch_id])
+          pred_points['points'] = []
+
+          for i in range(points.shape[1]):
+            point = {}
+            point['x'] = float(points[batch_id][i][0])
+            point['y'] = float(points[batch_id][i][1])
+            point['z'] = float(points[batch_id][i][2])
 
 
-          point['label'] = int(part_label[batch_id][i])
-          point['pred'] = int(pred_seg_res[batch_id][i])
+            point['label'] = int(part_label[batch_id][i])
+            point['pred'] = int(pred_seg_res[batch_id][i])
 
-          pred_points['points'].append(point)
+            pred_points['points'].append(point)
 
-        all_objects.append(pred_points)
-        
+          all_objects.append(pred_points)
+          
 
       # print(pred_seg_res.shape, part_label.shape)
 
-      per_instance_part_acc = np.mean(pred_seg_res == part_label.numpy(), axis=1)
+      part_label_per_class = part_label.numpy()
+      per_instance_part_acc = np.mean(pred_seg_res == part_label_per_class, axis=1)
       average_part_acc = np.mean(per_instance_part_acc)
 
-      total_seen += 1
+      total_seg_acc_seen += 1
       
       total_seg_acc += average_part_acc
 
@@ -258,21 +302,49 @@ def predict():
         total_seen_per_cat[cls_label_[shape_idx]] += 1
         total_seg_acc_per_cat[cls_label_[shape_idx]] += per_instance_part_acc[shape_idx]
 
-    total_seg_acc = total_seg_acc * 1.0 / total_seen
+      for shape_idx in range (part_label_per_class.shape[0]):
+        mask = np.int32(pred_seg_res[shape_idx] == part_label_per_class[shape_idx])
+        total_iou = 0.0
+        for part_id in range(NUM_PART_CATS): #normally all part classes within this specific subclass
+            n_pred = np.sum(pred_seg_res[shape_idx] == part_id)
+            n_gt = np.sum(part_label_per_class[shape_idx] == part_id)
+            n_intersect = np.sum(np.int32(part_label_per_class[shape_idx] == part_id) * mask)
+            n_union = n_pred + n_gt - n_intersect
+            if n_union == 0:
+                total_iou += 1
+            else:
+                total_iou += n_intersect * 1.0 / n_union
+        avg_iou = total_iou / NUM_PART_CATS
+        total_acc_iou += avg_iou
+        total_seen += 1
+        total_per_cat_iou[cls_label_[shape_idx]] += avg_iou    
+
+      for point_set_no in range (cls_label_.shape[0]):
+        e, _, _ = get_entropy(pred_seg_res[point_set_no],part_label[point_set_no],points[point_set_no,],cls_label_[point_set_no],total_entropy_per_cat,point_num,entropy_neighbors)
+        entropy.append(e)
+
+    total_seg_acc = total_seg_acc * 1.0 / total_seg_acc_seen
 
 
     #test_writer.add_summary(test_loss_sum, (epoch_num+1) * num_train_file-1)
     #test_writer.add_summary(test_seg_acc_sum, (epoch_num+1) * num_train_file-1)
 
-    printout(flog, '\t\tTesting Seg Accuracy: %f' % total_seg_acc)
+    mean_IoU = total_acc_iou/total_seen
+
+    print('\nAccuracy: %f IoU: %f Entropy: %f' %
+          (total_seg_acc, mean_IoU, np.mean(entropy)))
 
     for cat_idx in range(NUM_CATEGORIES):
       if total_seen_per_cat[cat_idx] > 0:
-        printout(flog, '\n\t\tCategory %s Object Number: %d' % (all_obj_cats[cat_idx][0], total_seen_per_cat[cat_idx]))
-        printout(flog, '\t\tCategory %s Seg Accuracy: %f' % (all_obj_cats[cat_idx][0], total_seg_acc_per_cat[cat_idx]/total_seen_per_cat[cat_idx]))
+        print('\n\tCategory %s:\n\t\tObject Number: %d' % (all_obj_cats[cat_idx][0], total_seen_per_cat[cat_idx]))
+        print('\t\tSeg Accuracy: %f' % (total_seg_acc_per_cat[cat_idx]/total_seen_per_cat[cat_idx]))
+        print('\t\tSeg IoU: %f' % (total_per_cat_iou[cat_idx]/total_seen_per_cat[cat_idx]))
+        print('\t\tEntropy: %f' % (total_entropy_per_cat[cat_idx]/total_seen_per_cat[cat_idx]))
 
-    with open('output.json', 'w') as f:
-      json.dump(all_objects, f)
+
+    if should_save:
+      with open('output.json', 'w') as f:
+        json.dump(all_objects, f)
 
     # for shape_idx in range(len_pts_files):
     #   if shape_idx % 100 == 0:

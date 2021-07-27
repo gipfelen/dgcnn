@@ -14,6 +14,7 @@ sys.path.append(os.path.dirname(BASE_DIR))
 import part_seg_model as model
 import affordances_loader
 import kitchen_dat_subset_loader
+import affordance_net
 
 TOWER_NAME = 'tower'
 
@@ -26,6 +27,9 @@ parser.add_argument('--dataset', type=str, default="affordances", help='The numb
 parser.add_argument('--point_num', type=int, default=2048, help='Point Number [256/512/1024/2048]')
 parser.add_argument('--output_dir', type=str, default='train_results', help='Directory that stores all training logs and trained models')
 parser.add_argument('--wd', type=float, default=0, help='Weight Decay [Default: 0.0]')
+parser.add_argument('--num_categories', type=int, default=17, help='Epoch to run [default: 50]')
+parser.add_argument('--num_part_cats', type=int, default=8, help='Epoch to run [default: 50]')
+
 FLAGS = parser.parse_args()
 
 
@@ -39,8 +43,8 @@ if not os.path.exists(output_dir):
 
 all_obj_cats = [('Bowl', 0), ('Cup', 1), ('Hammer', 2), ('Knife', 3), ('Ladle', 4), ('Mallet', 5), ('Mug', 6), ('Pot', 7), ('Saw', 8), ('Scissors', 9), ('Scoop', 10), ('Shears', 11), ('Shovel', 12), ('Spoon', 13), ('Tenderizer', 14), ('Trowel', 15), ('Turner', 16)]
 
-NUM_CATEGORIES = 17
-NUM_PART_CATS = 8
+NUM_CATEGORIES = FLAGS.num_categories
+NUM_PART_CATS = FLAGS.num_part_cats
 
 print('#### Batch Size Per GPU: {0}'.format(batch_size))
 print('#### Point Number: {0}'.format(point_num))
@@ -222,14 +226,23 @@ def train():
       train_dataset = affordances_loader.PartDataset(classification=False, npoints=point_num, split='train')
       train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
 
-      test_dataset = affordances_loader.PartDataset(classification=False, npoints=point_num, split='val')
-      test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+      val_dataset = affordances_loader.PartDataset(classification=False, npoints=point_num, split='val')
+      val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
     elif FLAGS.dataset == "kitchen":
       train_dataset = kitchen_dat_subset_loader.PartDataset(classification=False, npoints=point_num, split='train')
       train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
 
-      test_dataset = kitchen_dat_subset_loader.PartDataset(classification=False, npoints=point_num, split='val')
-      test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+      val_dataset = kitchen_dat_subset_loader.PartDataset(classification=False, npoints=point_num, split='val')
+      val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+    elif FLAGS.dataset == "affordance_net":
+      train_dataset = affordance_net.AffordNetDataset(split='train')
+      train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+
+      val_dataset = affordance_net.AffordNetDataset(split='val')
+      val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+
+      all_classes = affordance_net.all_classes
+      all_obj_cats= list(all_classes.items())
 
     def train_one_epoch( epoch_num):
       is_training = True
@@ -294,7 +307,7 @@ def train():
       total_seg_acc_per_cat = np.zeros((NUM_CATEGORIES)).astype(np.float32)
       total_seen_per_cat = np.zeros((NUM_CATEGORIES)).astype(np.int32)
 
-      for batch_id, data in enumerate(test_dataloader):
+      for batch_id, data in enumerate(val_dataloader):
         points, part_label, cls_label_ = data
         if(points.size(0)<batch_size):
           break
