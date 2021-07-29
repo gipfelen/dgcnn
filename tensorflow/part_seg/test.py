@@ -13,11 +13,15 @@ import provider
 import part_seg_model as model
 import affordances_loader
 import kitchen_dat_subset_loader
+import affordance_net
 import torch
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--model_path', default='train_results/trained_models_affordances/epoch_200.ckpt', help='Model checkpoint path')
 parser.add_argument('--dataset', type=str, default="affordances", help='The number of GPUs to use [default: 2]')
+parser.add_argument('--num_categories', type=int, default=17, help='Epoch to run [default: 50]')
+parser.add_argument('--num_part_cats', type=int, default=8, help='Epoch to run [default: 50]')
+
 FLAGS = parser.parse_args()
 
 # DEFAULT SETTINGS
@@ -60,8 +64,8 @@ all_obj_cats = [('bowl', 0), ('cup', 1), ('hammer', 2), ('knife', 3), ('ladle', 
 
 entropy_neighbors=20
 
-NUM_CATEGORIES = 17
-NUM_PART_CATS = 8
+NUM_CATEGORIES = FLAGS.num_categories
+NUM_PART_CATS = FLAGS.num_part_cats
 
 # cpid2oid = json.load(open(os.path.join(hdf5_data_dir, 'catid_partid_to_overallid.json'), 'r'))
 
@@ -218,6 +222,13 @@ def predict():
     elif FLAGS.dataset == "kitchen":
       test_dataset = kitchen_dat_subset_loader.PartDataset(classification=False, npoints=point_num, split='test')
       test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
+    elif FLAGS.dataset == "affordance_net":
+      test_dataset = affordance_net.AffordNetDataset(split='test')
+      test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+
+      all_classes = affordance_net.all_classes
+      all_obj_cats= list(all_classes.items())
+
     is_training = False
 
     total_loss = 0.0
